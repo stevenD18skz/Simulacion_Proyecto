@@ -11,7 +11,8 @@ import numpy as np
 
 def comparar_convergencia(error_jacobi, error_gauss, error_richardson,
                           iter_jacobi=None, iter_gauss=None, iter_richardson=None,
-                          Residuo_jacobi=None, Residuo_gauss=None, Residuo_richardson=None):
+                          Residuo_jacobi=None, Residuo_gauss=None, Residuo_richardson=None,
+                          Tiempo_jacobi=None, Tiempo_gauss=None, Tiempo_richardson=None):
     """
     Grafica y compara las convergencias de Jacobi, Gauss-Seidel y Richardson
     con anotaciones en recuadros que muestran métricas clave.
@@ -59,16 +60,24 @@ def comparar_convergencia(error_jacobi, error_gauss, error_richardson,
         text += "Metricas de convergencia:\n"
         if iter_jacobi is not None:
             text += f"Jacobi: {iter_jacobi} iters"
+            if Tiempo_jacobi is not None:
+                text += f", {Tiempo_jacobi:.2f} s"
+
             if Residuo_jacobi is not None:
                 text += f"\nResiduo: {Residuo_jacobi}"
+
             text += "\n"
         if iter_gauss is not None:
             text += f"Gauss-Seidel: {iter_gauss} iters"
+            if Tiempo_jacobi is not None:
+                text += f", {Tiempo_gauss:.2f} s"
             if Residuo_gauss is not None:
                 text += f"\nResiduo: {Residuo_gauss}"
             text += "\n"
         if iter_richardson is not None:
             text += f"Richardson: {iter_richardson} iters"
+            if Tiempo_jacobi is not None:
+                text += f", {Tiempo_richardson:.2f} s"
             if Residuo_richardson is not None:
                 text += f"\nResiduo: {Residuo_richardson}"
             text += "\n"
@@ -102,4 +111,7 @@ comparar_convergencia(
     #Residuo_jacobi=1,
     Residuo_gauss=3.04e-06,
     Residuo_richardson=1.25e-05,   
+    Tiempo_jacobi=0.25555,
+    Tiempo_gauss=0.2167,
+    Tiempo_richardson=0.3867,
 )
