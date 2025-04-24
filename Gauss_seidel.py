@@ -2,11 +2,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 from scipy.sparse import lil_matrix, csr_matrix
-
-
+import matplotlib.pyplot as plt
 import seaborn as sns
+import numpy as np
 
-# Reutilizamos setup_grid y build_system del entorno
 def setup_grid(nx, ny, initial_velocity=1.0):
     Ux = np.zeros((ny, nx))
     Ux[:, 0] = initial_velocity
@@ -14,6 +13,8 @@ def setup_grid(nx, ny, initial_velocity=1.0):
     Ux[0, :] = 0.0
     Ux[-1, :] = 0.0
     return Ux
+
+
 
 def build_system(Ux, omega=0.1):
     ny, nx = Ux.shape
@@ -30,6 +31,8 @@ def build_system(Ux, omega=0.1):
             vort = 0.5 * omega * (un - us)
             F[idx] = Ux[j,i] - 0.25*(ue+uw+un+us) + conv - vort
     return csr_matrix((num,num)), F  # Only residual necessary
+
+
 
 def gauss_seidel_solver(nx, ny, omega, tol=1e-6, max_iter=500):
     U = setup_grid(nx, ny, 1.0)
@@ -65,18 +68,43 @@ def gauss_seidel_solver(nx, ny, omega, tol=1e-6, max_iter=500):
     return U, errors, residuals, k+1, elapsed
 
 
-def visualizar_matriz(matriz, title):
+
+def graficar_conjuntamente(metodo, errors, matriz, title, 
+                           iteraciones=None, tiempo=None, 
+                           error_final=None, residuo_final=None):
     """
-    Visualiza una matriz 2D como heatmap con orientación física correcta.
-    Ejes:
-    - X: Horizontal (izquierda -> derecha)
-    - Y: Vertical (abajo -> arriba)
+    Grafica la evolución del error y un heatmap de la matriz en la misma ventana.
+    También puede mostrar métricas si se proporcionan.
     """
-    plt.figure(figsize=(10, 6))
-    
-    # Crear heatmap y ajustar ejes
-    ax = sns.heatmap(
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))  # 1 fila, 2 columnas
+
+    # Subplot 1: Convergencia
+    axes[0].semilogy(errors, 'b-o', linewidth=2, markersize=4)
+    axes[0].set_title(f"Convergencia del método de {metodo}", fontsize=14)
+    axes[0].set_xlabel("Iteración", fontsize=12)
+    axes[0].set_ylabel("Error máximo (escala log)", fontsize=12)
+    axes[0].grid(True, which='both', linestyle='--', alpha=0.7)
+
+    # Mostrar métricas si se proporcionan
+    if iteraciones is not None or tiempo is not None or error_final is not None or residuo_final is not None:
+        texto = ""
+        if iteraciones is not None:
+            texto += f"Iteraciones: {iteraciones}\n"
+        if tiempo is not None:
+            texto += f"Tiempo total: {tiempo:.4f} s\n"
+        if error_final is not None:
+            texto += f"Error final: {error_final:.2e}\n"
+        if residuo_final is not None:
+            texto += f"Residuo final: {residuo_final:.2e}"
+        
+        axes[0].text(0.95, 0.05, texto, transform=axes[0].transAxes,
+                     fontsize=10, verticalalignment='bottom', horizontalalignment='right',
+                     bbox=dict(facecolor='white', alpha=0.8, boxstyle='round'))
+
+    # Subplot 2: Heatmap de la matriz
+    sns.heatmap(
         matriz,
+        ax=axes[1],
         annot=False,
         fmt=".1f",
         cmap="viridis",
@@ -84,56 +112,39 @@ def visualizar_matriz(matriz, title):
         linecolor="black",
         cbar_kws={'label': 'Velocidad (Ux)'}
     )
-    
-    # Configurar ejes para coincidir con orientación física
-    ax.set_title(title, fontsize=14, pad=20)
-    ax.set_xlabel('Dirección X (izquierda -> derecha)', fontsize=12)
-    ax.set_ylabel('Dirección Y (abajo -> arriba)', fontsize=12)
-    
-    # Ajustar ticks para mostrar índices físicos
-    ax.set_xticks(np.arange(matriz.shape[1]) + 0.5)
-    ax.set_xticklabels(np.arange(matriz.shape[1]))
-    ax.set_yticks(np.arange(matriz.shape[0]) + 0.5)
-    ax.set_yticklabels(np.arange(matriz.shape[0]-1, -1, -1))  # Invertir orden Y
-    
-    plt.gca().invert_yaxis()  
+    axes[1].set_title(title, fontsize=14, pad=20)
+    axes[1].set_xlabel('Dirección X (izquierda -> derecha)', fontsize=12)
+    axes[1].set_ylabel('Dirección Y (abajo -> arriba)', fontsize=12)
+
+    # Ajustar ticks para heatmap
+    axes[1].set_xticks(np.arange(matriz.shape[1]) + 0.5)
+    axes[1].set_xticklabels(np.arange(matriz.shape[1]))
+    axes[1].set_yticks(np.arange(matriz.shape[0]) + 0.5)
+    axes[1].set_yticklabels(np.arange(matriz.shape[0]-1, -1, -1))
+    axes[1].invert_yaxis()
+
     plt.tight_layout()
     plt.show()
 
 
 
 
-# Parámetros
-nx, ny, omega = 30, 15, 0.1
 
-# Ejecutar Gauss-Seidel
-solution_gs, gs_errors, gs_residuals, gs_iters, gs_time = gauss_seidel_solver(nx, ny, omega)
+# Ejecución modificada
+if __name__ == "__main__":
+    # Parámetros
+    nx, ny, omega = 100, 10, 0.1
 
-# Mostrar métricas
-print(f"Gauss-Seidel convergió en {gs_iters} iteraciones") 
-print(f"Tiempo total: {gs_time:.4f} segundos")
-print(f"Error final (max diff): {gs_errors[-1]:.2e}")
-print(f"Norma final del residuo: {gs_residuals[-1]:.2e}")
+    # Ejecutar Gauss-Seidel
+    solution_gs, gs_errors, gs_residuals, gs_iters, gs_time = gauss_seidel_solver(nx, ny, omega)
 
-    
-visualizar_matriz(np.round(solution_gs, 7), 
-                f"Distribución de Velocidades (Jacobi)\nRejilla ")
-
-
-# Gráficas
-plt.figure(figsize=(10,4))
-
-plt.subplot(1,2,1)
-plt.semilogy(gs_errors, marker='o')
-plt.xlabel('Iteración')
-plt.ylabel('Error máximo')
-plt.title('Convergencia de GS (error)')
-
-plt.subplot(1,2,2)
-plt.semilogy(gs_residuals, marker='o')
-plt.xlabel('Iteración')
-plt.ylabel('||F||₂')
-plt.title('Residual norm')
-
-plt.tight_layout()
-plt.show()
+    graficar_conjuntamente(
+        metodo="Gauss-Seidel",
+        errors=gs_errors,
+        matriz=np.round(solution_gs, 7),
+        title=f"Distribución de Velocidad en el Fluido Gauss-Seidel - {nx}x{ny}",
+        iteraciones=gs_iters,
+        tiempo=gs_time,
+        error_final=gs_errors[-1],
+        residuo_final=gs_residuals[-1]
+    )
