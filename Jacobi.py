@@ -1,10 +1,6 @@
 import numpy as np
-from scipy.sparse import lil_matrix, csr_matrix
-from scipy.sparse.linalg import spsolve
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-
 
 def setup_grid(nx, ny, initial_velocity):
     """
@@ -31,108 +27,80 @@ def setup_grid(nx, ny, initial_velocity):
     
     return Ux
 
-def build_system(Ux):
+def jacobi_iteration(Ux, omega=1.0):
     """
-    Construye el sistema no lineal F y la matriz Jacobiana J
+    Realiza una iteración del método de Jacobi con posible relajación.
     
     Parámetros:
-    Ux -- Matriz 2D con los valores actuales de velocidad
+    Ux -- Matriz actual de velocidades
+    omega -- Factor de relajación (1: Jacobi estándar)
     
     Retorna:
-    J -- Matriz Jacobiana en formato disperso CSR
-    F -- Vector de residuos
+    Ux_new -- Nueva matriz actualizada
+    max_error -- Error máximo absoluto en esta iteración
     """
     ny, nx = Ux.shape
-    num_nodos = (nx-2)*(ny-2)  # Nodos interiores totales
-    F = np.zeros(num_nodos) 
-    J = lil_matrix((num_nodos, num_nodos)) # Matriz dispersa (LIL) para eficiencia en construcción
+    Ux_new = Ux.copy()
+    max_error = 0.0
     
-    # Mapa de índices 2D (i,j) a 1D para nodos interiores
-    index_map = np.zeros(Ux.shape, dtype=int)
-    index_map[1:-1, 1:-1] = np.arange(num_nodos).reshape(ny-2, nx-2)
-    
-    # Llenado del sistema ecuación por ecuación
-    for j in range(1, ny-1):    # Recorrer filas (dirección y)
-        for i in range(1, nx-1):  # Recorrer columnas (dirección x)
-            idx = index_map[j, i]  # Índice 1D actual
-            
-            # -----------------------------------------------------------------
-            # Ecuación discretizada: F(Ux) = 0
-            # -----------------------------------------------------------------
+    for j in range(1, ny-1):
+        for i in range(1, nx-1):
             vecino_der = Ux[j, i+1]
             vecino_izq = Ux[j, i-1]
             vecino_sup = Ux[j+1, i]
             vecino_inf = Ux[j-1, i]
 
-            termino_vorticida = 1/2 * 0.1 * (vecino_sup - vecino_inf)  
-            
+            termino_vorticida = 0.05 * (vecino_sup - vecino_inf)
             termino_convectivo = 0.125 * Ux[j,i] * (vecino_der - vecino_izq) - termino_vorticida
             
-            F[idx] = Ux[j,i] - 0.25*(vecino_der + vecino_izq + vecino_sup + vecino_inf) + termino_convectivo
+            # Cálculo del nuevo valor
+            nuevo_valor = 0.25*(vecino_der + vecino_izq + vecino_sup + vecino_inf) - termino_convectivo
             
-            # -----------------------------------------------------------------
-            # Construcción del Jacobiano: J[i,j] = ∂F[i]/∂Ux[j]
-            # -----------------------------------------------------------------
-            # Derivada respecto al nodo actual
-            J[idx, idx] = 1 - 0.125*(vecino_der - vecino_izq)
+            # Actualización con relajación
+            Ux_new[j,i] = omega * nuevo_valor + (1 - omega) * Ux[j,i]
             
-            # Derivadas respecto a vecinos en x (i±1)
-            if i+1 < nx-1:  # Vecino derecho existe (no es borde)
-                J[idx, index_map[j, i+1]] = -0.25 + 0.125*Ux[j,i]
+            # Calcular error
+            current_error = abs(Ux_new[j,i] - Ux[j,i])
+            if current_error > max_error:
+                max_error = current_error
                 
-            if i-1 > 0:     # Vecino izquierdo existe
-                J[idx, index_map[j, i-1]] = -0.25 - 0.125*Ux[j,i]
-            
-            # Derivadas respecto a vecinos en y (j±1) - solo términos lineales
-            if j+1 < ny-1:  # Vecino superior existe
-                J[idx, index_map[j+1, i]] = -0.25 + 0.0125
-                
-            if j-1 > 0:     # Vecino inferior existe
-                J[idx, index_map[j-1, i]] = -0.25 - 0.0125
+    return Ux_new, max_error
 
-    return csr_matrix(J), F  # Convertir a formato CSR para operaciones eficientes
-
-def newton_raphson(nx=5, ny=5, tol=1e-6, max_iter=50):
+def solve_jacobi(nx=5, ny=5, tol=1e-6, max_iter=1000, omega=1.0):
     """
-    Implementación principal del método de Newton-Raphson
-    
-    Parámetros:
-    nx -- Número de nodos en dirección x
-    ny -- Número de nodos en dirección y
-    tol -- Tolerancia para criterio de convergencia
-    max_iter -- Número máximo de iteraciones permitidas
-    initial_velocity -- Velocidad inicial en el borde izquierdo
+    Implementación del método de Jacobi con seguimiento de convergencia
     
     Retorna:
-    Matriz 2D con la solución convergida
+    Ux -- Matriz solución
+    errors -- Lista de errores por iteración
     """
-    # 1. Configuración inicial de la malla
     Ux = setup_grid(nx, ny, 1)
+    errors = []
     
-    # 2. Bucle principal de Newton-Raphson
-    for iteracion in range(max_iter):
-        # Construir sistema lineal J·ΔUx = -F
-        J, F = build_system(Ux)
+    for iter in range(max_iter):
+        Ux_new, error = jacobi_iteration(Ux, omega)
+        errors.append(error)
         
-        # Resolver sistema lineal usando método directo para matrices dispersas
-        delta = spsolve(J, -F)
+        # Actualizar solución manteniendo bordes fijos
+        Ux[1:-1, 1:-1] = Ux_new[1:-1, 1:-1]
         
-        # Actualizar solución: Ux_new = Ux_old + ΔUx
-        # Solo actualizar nodos interiores (excluyendo bordes)
-        Ux_interior = Ux[1:-1, 1:-1].flatten()
-        Ux_interior += delta
-        Ux[1:-1, 1:-1] = Ux_interior.reshape(ny-2, nx-2)
-        
-        # Calcular error máximo para criterio de convergencia
-        max_error = np.max(np.abs(delta))
-        print(f"Iter {iteracion+1}: Error = {max_error:.3e}")
-        
-        # Verificar convergencia
-        if max_error < tol:
-            print(f"Convergencia alcanzada en {iteracion+1} iteraciones")
+        if error < tol:
+            print(f"Convergencia en {iter+1} iteraciones")
             break
             
-    return Ux
+    return Ux, errors
+
+def plot_convergence(errors):
+    """Grafica la evolución del error por iteración"""
+    plt.figure(figsize=(10, 6))
+    plt.semilogy(errors, 'b-o', linewidth=2, markersize=4)
+    plt.title("Convergencia del método de Jacobi", fontsize=14)
+    plt.xlabel("Iteración", fontsize=12)
+    plt.ylabel("Error máximo (escala log)", fontsize=12)
+    plt.grid(True, which='both', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+
 
 def visualizar_matriz(matriz, title):
     """
@@ -170,21 +138,20 @@ def visualizar_matriz(matriz, title):
     plt.show()
 
 
-# =============================================================================
-# Ejecución y visualización
-# =============================================================================
-if __name__ == "__main__":
-    tamanno_n, tamanno_m = 30, 15 
-    
-    solucion = newton_raphson(nx=tamanno_n, ny=tamanno_m  )
 
-    print("\nSolución final (orientación física):")
-    print("Columnas = dirección x (izq -> der)")
-    print("Filas = dirección y (inf -> sup)\n")
-    print(solucion)  # Transponer para visualización correcta
+# Ejecución modificada
+if __name__ == "__main__":
+    tamanno_n, tamanno_m = 30, 15
     
-    # Visualización mejorada
-    visualizar_matriz(
-        matriz=np.round(solucion, 7),
-        title=f"Distribución de Velocidades - Rejilla {tamanno_n}x{tamanno_m}\n(Velocidad Inicial: Ux={1})"
-    )
+    # Resolver con Jacobi (omega=1 para Jacobi estándar)
+    solucion, errores = solve_jacobi(nx=tamanno_n, ny=tamanno_m, omega=1.0)
+    
+    # Visualizar resultados
+    print("\nEstadísticas de convergencia:")
+    print(f"Iteraciones realizadas: {len(errores)}")
+    print(f"Error final: {errores[-1]:.2e}")
+    
+    visualizar_matriz(np.round(solucion, 7), 
+                    f"Distribución de Velocidades (Jacobi)\nRejilla {tamanno_n}x{tamanno_m}")
+    
+    plot_convergence(errores)
