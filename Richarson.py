@@ -1,151 +1,98 @@
 import numpy as np
-from scipy.sparse import lil_matrix, csr_matrix
-from scipy.sparse.linalg import spsolve
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import time
+from scipy.sparse import lil_matrix, csr_matrix
+from scipy.sparse.linalg import spsolve
 
-
-def setup_grid(nx, ny, initial_velocity):
-    """
-    Configura la malla computacional con condiciones de contorno
-    
-    Parámetros:
-    nx -- Número de nodos en dirección x (horizontal)
-    ny -- Número de nodos en dirección y (vertical)
-    initial_velocity -- Velocidad inicial en el borde izquierdo
-    
-    Retorna:
-    Matriz 2D inicializada con condiciones de contorno:
-    - Borde izquierdo (i=0): Ux = initial_velocity
-    - Bordes derecho, superior e inferior: Ux = 0
-    """
-    # Crear malla de ceros (ny filas × nx columnas)
+# --- Reutilizamos setup_grid y build_system con vorticidad ---
+def setup_grid(nx, ny, initial_velocity=1.0):
     Ux = np.zeros((ny, nx))
-    
-    # Asignar condiciones de contorno
-    Ux[:, 0] = initial_velocity # Borde izquierdo (toda la primera columna)
-    Ux[:, -1] = 0.0   # Borde derecho (toda la última columna)
-    Ux[0, :] = 0.0    # Borde inferior (primera fila)
-    Ux[-1, :] = 0.0   # Borde superior (última fila)
-    
+    Ux[:, 0] = initial_velocity
+    Ux[:, -1] = 0.0
+    Ux[0, :] = 0.0
+    Ux[-1, :] = 0.0
     return Ux
 
-def build_system(Ux):
-    """
-    Construye el sistema no lineal F y la matriz Jacobiana J
-    
-    Parámetros:
-    Ux -- Matriz 2D con los valores actuales de velocidad
-    
-    Retorna:
-    J -- Matriz Jacobiana en formato disperso CSR
-    F -- Vector de residuos
-    """
+def build_system(Ux, omega=0.1):
     ny, nx = Ux.shape
-    num_nodos = (nx-2)*(ny-2)  # Nodos interiores totales
-    F = np.zeros(num_nodos) 
-    J = lil_matrix((num_nodos, num_nodos)) # Matriz dispersa (LIL) para eficiencia en construcción
-    
-    # Mapa de índices 2D (i,j) a 1D para nodos interiores
-    index_map = np.zeros(Ux.shape, dtype=int)
-    index_map[1:-1, 1:-1] = np.arange(num_nodos).reshape(ny-2, nx-2)
-    
-    # Llenado del sistema ecuación por ecuación
-    for j in range(1, ny-1):    # Recorrer filas (dirección y)
-        for i in range(1, nx-1):  # Recorrer columnas (dirección x)
-            idx = index_map[j, i]  # Índice 1D actual
-            
-            # -----------------------------------------------------------------
-            # Ecuación discretizada: F(Ux) = 0
-            # -----------------------------------------------------------------
-            vecino_der = Ux[j, i+1]
-            vecino_izq = Ux[j, i-1]
-            vecino_sup = Ux[j+1, i]
-            vecino_inf = Ux[j-1, i]
+    num = (nx-2)*(ny-2)
+    F = np.zeros(num)
+    idx_map = np.zeros(Ux.shape, int)
+    idx_map[1:-1,1:-1] = np.arange(num).reshape(ny-2, nx-2)
+    for j in range(1, ny-1):
+        for i in range(1, nx-1):
+            idx = idx_map[j,i]
+            ue, uw = Ux[j,i+1], Ux[j,i-1]
+            un, us = Ux[j+1,i], Ux[j-1,i]
+            conv = 0.125 * Ux[j,i] * (ue - uw)
+            vort = 0.5 * omega * (un - us)
+            F[idx] = Ux[j,i] - 0.25*(ue+uw+un+us) + conv - vort
+    return None, F  # Solo necesitamos F
 
-            termino_vorticida = 1/2 * 0.1 * (vecino_sup - vecino_inf)  
-            
-            termino_convectivo = 0.125 * Ux[j,i] * (vecino_der - vecino_izq) - termino_vorticida
-            
-            F[idx] = Ux[j,i] - 0.25*(vecino_der + vecino_izq + vecino_sup + vecino_inf) + termino_convectivo
-            
-            # -----------------------------------------------------------------
-            # Construcción del Jacobiano: J[i,j] = ∂F[i]/∂Ux[j]
-            # -----------------------------------------------------------------
-            # Derivada respecto al nodo actual
-            J[idx, idx] = 1 - 0.125*(vecino_der - vecino_izq)
-            
-            # Derivadas respecto a vecinos en x (i±1)
-            if i+1 < nx-1:  # Vecino derecho existe (no es borde)
-                J[idx, index_map[j, i+1]] = -0.25 + 0.125*Ux[j,i]
-                
-            if i-1 > 0:     # Vecino izquierdo existe
-                J[idx, index_map[j, i-1]] = -0.25 - 0.125*Ux[j,i]
-            
-            # Derivadas respecto a vecinos en y (j±1) - solo términos lineales
-            if j+1 < ny-1:  # Vecino superior existe
-                J[idx, index_map[j+1, i]] = -0.25 + 0.0125
-                
-            if j-1 > 0:     # Vecino inferior existe
-                J[idx, index_map[j-1, i]] = -0.25 - 0.0125
-
-    return csr_matrix(J), F  # Convertir a formato CSR para operaciones eficientes
-
-def newton_raphson(nx=5, ny=5, tol=1e-6, max_iter=50):
-    """
-    Implementación principal del método de Newton-Raphson
+# --- Método de Richardson ---
+def solve_richardson(nx, ny, omega=0.1, alpha=0.5, tol=1e-6, max_iter=1000):
+    U = setup_grid(nx, ny, 1.0)
+    errors = []
+    residuals = []
+    start_time = time.time()
     
-    Parámetros:
-    nx -- Número de nodos en dirección x
-    ny -- Número de nodos en dirección y
-    tol -- Tolerancia para criterio de convergencia
-    max_iter -- Número máximo de iteraciones permitidas
-    initial_velocity -- Velocidad inicial en el borde izquierdo
-    
-    Retorna:
-    Matriz 2D con la solución convergida
-    """
-    # 1. Configuración inicial de la malla
-    Ux = setup_grid(nx, ny, 1)
-    
-    # 2. Bucle principal de Newton-Raphson
-    for iteracion in range(max_iter):
-        # Construir sistema lineal J·ΔUx = -F
-        J, F = build_system(Ux)
-        
-        # Resolver sistema lineal usando método directo para matrices dispersas
-        delta = spsolve(J, -F)
-        
-        # Actualizar solución: Ux_new = Ux_old + ΔUx
-        # Solo actualizar nodos interiores (excluyendo bordes)
-        Ux_interior = Ux[1:-1, 1:-1].flatten()
-        Ux_interior += delta
-        Ux[1:-1, 1:-1] = Ux_interior.reshape(ny-2, nx-2)
-        
-        # Calcular error máximo para criterio de convergencia
+    for k in range(max_iter):
+        _, F = build_system(U, omega)
+        delta = -alpha * F
         max_error = np.max(np.abs(delta))
-        print(f"Iter {iteracion+1}: Error = {max_error:.3e}")
         
-        # Verificar convergencia
+        # Actualizar interior
+        U_interior = U[1:-1,1:-1].flatten() + delta
+        U[1:-1,1:-1] = U_interior.reshape(ny-2, nx-2)
+        
+        errors.append(max_error)
+        residuals.append(np.linalg.norm(F, 2))
+        
         if max_error < tol:
-            print(f"Convergencia alcanzada en {iteracion+1} iteraciones")
             break
-            
-    return Ux
-
-def visualizar_matriz(matriz, title):
-    """
-    Visualiza una matriz 2D como heatmap con orientación física correcta.
-    Ejes:
-    - X: Horizontal (izquierda -> derecha)
-    - Y: Vertical (abajo -> arriba)
-    """
-    plt.figure(figsize=(10, 6))
     
-    # Crear heatmap y ajustar ejes
-    ax = sns.heatmap(
+    elapsed = time.time() - start_time
+    return U, errors, residuals, k+1, elapsed
+
+
+
+def graficar_conjuntamente(metodo, errors, matriz, title, 
+                           iteraciones=None, tiempo=None, 
+                           error_final=None, residuo_final=None):
+    """
+    Grafica la evolución del error y un heatmap de la matriz en la misma ventana.
+    También puede mostrar métricas si se proporcionan.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))  # 1 fila, 2 columnas
+
+    # Subplot 1: Convergencia
+    axes[0].semilogy(errors, 'b-o', linewidth=2, markersize=4)
+    axes[0].set_title(f"Convergencia del método de {metodo}", fontsize=14)
+    axes[0].set_xlabel("Iteración", fontsize=12)
+    axes[0].set_ylabel("Error máximo (escala log)", fontsize=12)
+    axes[0].grid(True, which='both', linestyle='--', alpha=0.7)
+
+    # Mostrar métricas si se proporcionan
+    if iteraciones is not None or tiempo is not None or error_final is not None or residuo_final is not None:
+        texto = ""
+        if iteraciones is not None:
+            texto += f"Iteraciones: {iteraciones}\n"
+        if tiempo is not None:
+            texto += f"Tiempo total: {tiempo:.4f} s\n"
+        if error_final is not None:
+            texto += f"Error final: {error_final:.2e}\n"
+        if residuo_final is not None:
+            texto += f"Residuo final: {residuo_final:.2e}"
+        
+        axes[0].text(0.95, 0.05, texto, transform=axes[0].transAxes,
+                     fontsize=10, verticalalignment='bottom', horizontalalignment='right',
+                     bbox=dict(facecolor='white', alpha=0.8, boxstyle='round'))
+
+    # Subplot 2: Heatmap de la matriz
+    sns.heatmap(
         matriz,
+        ax=axes[1],
         annot=False,
         fmt=".1f",
         cmap="viridis",
@@ -153,38 +100,46 @@ def visualizar_matriz(matriz, title):
         linecolor="black",
         cbar_kws={'label': 'Velocidad (Ux)'}
     )
-    
-    # Configurar ejes para coincidir con orientación física
-    ax.set_title(title, fontsize=14, pad=20)
-    ax.set_xlabel('Dirección X (izquierda -> derecha)', fontsize=12)
-    ax.set_ylabel('Dirección Y (abajo -> arriba)', fontsize=12)
-    
-    # Ajustar ticks para mostrar índices físicos
-    ax.set_xticks(np.arange(matriz.shape[1]) + 0.5)
-    ax.set_xticklabels(np.arange(matriz.shape[1]))
-    ax.set_yticks(np.arange(matriz.shape[0]) + 0.5)
-    ax.set_yticklabels(np.arange(matriz.shape[0]-1, -1, -1))  # Invertir orden Y
-    
-    plt.gca().invert_yaxis()  
+    axes[1].set_title(title, fontsize=14, pad=20)
+    axes[1].set_xlabel('Dirección X (izquierda -> derecha)', fontsize=12)
+    axes[1].set_ylabel('Dirección Y (abajo -> arriba)', fontsize=12)
+
+    # Ajustar ticks para heatmap
+    axes[1].set_xticks(np.arange(matriz.shape[1]) + 0.5)
+    axes[1].set_xticklabels(np.arange(matriz.shape[1]))
+    axes[1].set_yticks(np.arange(matriz.shape[0]) + 0.5)
+    axes[1].set_yticklabels(np.arange(matriz.shape[0]-1, -1, -1))
+    axes[1].invert_yaxis()
+
     plt.tight_layout()
     plt.show()
 
 
-# =============================================================================
-# Ejecución y visualización
-# =============================================================================
+# --- Ejecución y visualización ---
 if __name__ == "__main__":
-    tamanno_n, tamanno_m = 30, 15 
+    nx, ny, omega = 100, 10, 0.1
+    alpha = 0.5
+    tol = 1e-6
+    max_iter = 1000
     
-    solucion = newton_raphson(nx=tamanno_n, ny=tamanno_m  )
+    sol_rich, rich_errors, rich_res, rich_iters, rich_time = solve_richardson(
+        nx, ny, omega, alpha, tol, max_iter
+    )
+    
+    print(f"Richardson convergió en {rich_iters} iteraciones")
+    print(f"Tiempo total: {rich_time:.4f} s")
+    print(f"Error final: {rich_errors[-1]:.2e}")
+    print(f"Norma final del residuo: {rich_res[-1]:.2e}")
+    
+    
+    graficar_conjuntamente(
+        metodo="Richardson",
+        errors=rich_errors,
+        matriz=np.round(sol_rich, 7),
+        title=f"Distribución de Velocidad en el Fluido (Richardson) - {nx}x{ny}",
+        iteraciones=rich_iters,
+        tiempo=rich_time,
+        error_final=rich_errors[-1],
+        residuo_final=rich_res[-1]
 
-    print("\nSolución final (orientación física):")
-    print("Columnas = dirección x (izq -> der)")
-    print("Filas = dirección y (inf -> sup)\n")
-    print(solucion)  # Transponer para visualización correcta
-    
-    # Visualización mejorada
-    visualizar_matriz(
-        matriz=np.round(solucion, 7),
-        title=f"Distribución de Velocidades - Rejilla {tamanno_n}x{tamanno_m}\n(Velocidad Inicial: Ux={1})"
     )
