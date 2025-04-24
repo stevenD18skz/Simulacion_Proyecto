@@ -1,190 +1,171 @@
 import numpy as np
-from scipy.sparse import lil_matrix, csr_matrix
-from scipy.sparse.linalg import spsolve
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.sparse import lil_matrix, csr_matrix
 
 
 def setup_grid(nx, ny, initial_velocity):
     """
-    Configura la malla computacional con condiciones de contorno
-    
+    Configura la malla computacional con condiciones de contorno.
+
     Parámetros:
-    nx -- Número de nodos en dirección x (horizontal)
-    ny -- Número de nodos en dirección y (vertical)
-    initial_velocity -- Velocidad inicial en el borde izquierdo
-    
+    - nx: número de nodos en la dirección x (columnas)
+    - ny: número de nodos en la dirección y (filas)
+    - initial_velocity: valor de Ux en el borde izquierdo
+
     Retorna:
-    Matriz 2D inicializada con condiciones de contorno:
-    - Borde izquierdo (i=0): Ux = initial_velocity
-    - Bordes derecho, superior e inferior: Ux = 0
+    - Ux: matriz (ny × nx) con velocidades iniciales y condiciones de contorno aplicadas
     """
-    # Crear malla de ceros (ny filas × nx columnas)
+    # Inicializar matriz de velocidad con ceros
     Ux = np.zeros((ny, nx))
-    
-    # Asignar condiciones de contorno
-    Ux[:, 0] = initial_velocity # Borde izquierdo (toda la primera columna)
-    Ux[:, -1] = 0.0   # Borde derecho (toda la última columna)
-    Ux[0, :] = 0.0    # Borde inferior (primera fila)
-    Ux[-1, :] = 0.0   # Borde superior (última fila)
-    
+    # Aplicar condiciones de contorno:
+    Ux[:, 0] = initial_velocity  # Borde izquierdo: velocidad de entrada
+    Ux[:, -1] = 0.0              # Borde derecho: velocidad cero (salida)
+    Ux[0, :] = 0.0               # Borde inferior: no slip
+    Ux[-1, :] = 0.0              # Borde superior: no slip
     return Ux
 
-def build_system(Ux):
+
+def build_system(Ux, vort_const):
     """
-    Construye el sistema no lineal F y la matriz Jacobiana J
-    
+    Construye el vector de residuos F y la matriz Jacobiana J para el sistema no lineal,
+    incluyendo el término de vorticidad parametrizado.
+
     Parámetros:
-    Ux -- Matriz 2D con los valores actuales de velocidad
-    
+    - Ux: matriz 2D con valores actuales de la velocidad en la malla
+    - vort_const: constante de vorticidad (por ejemplo, 0.1)
+
     Retorna:
-    J -- Matriz Jacobiana en formato disperso CSR
-    F -- Vector de residuos
+    - J: matriz Jacobiana en formato disperso CSR
+    - F: vector de residuos (1D)
     """
     ny, nx = Ux.shape
-    num_nodos = (nx-2)*(ny-2)  # Nodos interiores totales
-    F = np.zeros(num_nodos) 
-    J = lil_matrix((num_nodos, num_nodos)) # Matriz dispersa (LIL) para eficiencia en construcción
-    
-    # Mapa de índices 2D (i,j) a 1D para nodos interiores
-    index_map = np.zeros(Ux.shape, dtype=int)
-    index_map[1:-1, 1:-1] = np.arange(num_nodos).reshape(ny-2, nx-2)
-    
-    # Llenado del sistema ecuación por ecuación
-    for j in range(1, ny-1):    # Recorrer filas (dirección y)
-        for i in range(1, nx-1):  # Recorrer columnas (dirección x)
-            idx = index_map[j, i]  # Índice 1D actual
-            
-            # -----------------------------------------------------------------
-            # Ecuación discretizada: F(Ux) = 0
-            # -----------------------------------------------------------------
-            vecino_der = Ux[j, i+1]
-            vecino_izq = Ux[j, i-1]
-            vecino_sup = Ux[j+1, i]
-            vecino_inf = Ux[j-1, i]
+    num_nodos = (nx - 2) * (ny - 2)  # nodos interiores
 
-            termino_vorticida = 1/2 * 0.1 * (vecino_sup - vecino_inf)  
-            
-            termino_convectivo = 0.125 * Ux[j,i] * (vecino_der - vecino_izq) - termino_vorticida
-            
-            F[idx] = Ux[j,i] - 0.25*(vecino_der + vecino_izq + vecino_sup + vecino_inf) + termino_convectivo
-            
-            # -----------------------------------------------------------------
-            # Construcción del Jacobiano: J[i,j] = ∂F[i]/∂Ux[j]
-            # -----------------------------------------------------------------
-            # Derivada respecto al nodo actual
-            J[idx, idx] = 1 - 0.125*(vecino_der - vecino_izq)
-            
-            # Derivadas respecto a vecinos en x (i±1)
-            if i+1 < nx-1:  # Vecino derecho existe (no es borde)
-                J[idx, index_map[j, i+1]] = -0.25 + 0.125*Ux[j,i]
-                
-            if i-1 > 0:     # Vecino izquierdo existe
-                J[idx, index_map[j, i-1]] = -0.25 - 0.125*Ux[j,i]
-            
-            # Derivadas respecto a vecinos en y (j±1) - solo términos lineales
-            if j+1 < ny-1:  # Vecino superior existe
-                J[idx, index_map[j+1, i]] = -0.25 + 0.0125
-                
-            if j-1 > 0:     # Vecino inferior existe
-                J[idx, index_map[j-1, i]] = -0.25 - 0.0125
+    # Inicializar vector de residuos y Jacobiana dispersa
+    F = np.zeros(num_nodos)
+    J = lil_matrix((num_nodos, num_nodos))
 
-    return csr_matrix(J), F  # Convertir a formato CSR para operaciones eficientes
+    # Mapeo de índices 2D a 1D para nodos interiores
+    index_map = np.zeros_like(Ux, dtype=int)
+    index_map[1:-1, 1:-1] = np.arange(num_nodos).reshape(ny - 2, nx - 2)
 
-def newton_raphson(nx=5, ny=5, tol=1e-6, max_iter=50):
+    # Recorrer cada nodo interior
+    for j in range(1, ny - 1):
+        for i in range(1, nx - 1):
+            idx = index_map[j, i]
+            # Velocidades de vecinos
+            ve, vw = Ux[j, i + 1], Ux[j, i - 1]
+            vn, vs = Ux[j + 1, i], Ux[j - 1, i]
+
+            # Término de vorticidad: 0.5 * vort_const * (vn - vs)
+            vorticity_term = 0.5 * vort_const * (vn - vs)
+            # Término convectivo no lineal, se resta la vorticidad
+            convective_term = 0.125 * Ux[j, i] * (ve - vw) - vorticity_term
+
+            # Residuo: diferencia con promedio de vecinos más término convectivo
+            F[idx] = Ux[j, i] - 0.25 * (ve + vw + vn + vs) + convective_term
+
+            # Montaje de Jacobiana:
+            # derivada parcial respecto a Ux[j,i]
+            J[idx, idx] = 1 - 0.125 * (ve - vw)
+            # derivadas parciales respecto a vecinos
+            if i + 1 < nx - 1:
+                J[idx, index_map[j, i + 1]] = -0.25 + 0.125 * Ux[j, i]
+            if i - 1 > 0:
+                J[idx, index_map[j, i - 1]] = -0.25 - 0.125 * Ux[j, i]
+            if j + 1 < ny - 1:
+                J[idx, index_map[j + 1, i]] = -0.25 + 0.0125
+            if j - 1 > 0:
+                J[idx, index_map[j - 1, i]] = -0.25 - 0.0125
+
+    return csr_matrix(J), F
+
+
+def gradient_descent(nx=5, ny=5, vort_const=0.1, lr=1e-2, tol=1e-6, max_iter=50):
     """
-    Implementación principal del método de Newton-Raphson
-    
+    Aplica el método de gradiente descendente para resolver F(U)=0,
+    parametrizando la vorticidad y usando tolerancia y número máximo de iteraciones.
+
     Parámetros:
-    nx -- Número de nodos en dirección x
-    ny -- Número de nodos en dirección y
-    tol -- Tolerancia para criterio de convergencia
-    max_iter -- Número máximo de iteraciones permitidas
-    initial_velocity -- Velocidad inicial en el borde izquierdo
-    
+    - nx, ny: dimensiones de la rejilla (nodos en x e y)
+    - vort_const: constante de vorticidad (igual que en código de Newton-Raphson)
+    - lr: tasa de aprendizaje (learning rate)
+    - tol: tolerancia para la norma del residuo ||F|| (criterio de convergencia)
+    - max_iter: número máximo de iteraciones permitidas
+
     Retorna:
-    Matriz 2D con la solución convergida
+    - Ux: matriz 2D con la solución aproximada
     """
-    # 1. Configuración inicial de la malla
-    Ux = setup_grid(nx, ny, 1)
-    
-    # 2. Bucle principal de Newton-Raphson
-    for iteracion in range(max_iter):
-        # Construir sistema lineal J·ΔUx = -F
-        J, F = build_system(Ux)
-        
-        # Resolver sistema lineal usando método directo para matrices dispersas
-        delta = spsolve(J, -F)
-        
-        # Actualizar solución: Ux_new = Ux_old + ΔUx
-        # Solo actualizar nodos interiores (excluyendo bordes)
-        Ux_interior = Ux[1:-1, 1:-1].flatten()
-        Ux_interior += delta
-        Ux[1:-1, 1:-1] = Ux_interior.reshape(ny-2, nx-2)
-        
-        # Calcular error máximo para criterio de convergencia
-        max_error = np.max(np.abs(delta))
-        print(f"Iter {iteracion+1}: Error = {max_error:.3e}")
-        
-        # Verificar convergencia
-        if max_error < tol:
-            print(f"Convergencia alcanzada en {iteracion+1} iteraciones")
+    # 1) Inicializar malla con condiciones de contorno
+    Ux = setup_grid(nx, ny, initial_velocity=1)
+
+    # 2) Ciclo de gradiente descendente
+    for iteracion in range(1, max_iter + 1):
+        # 2.1) Construir sistema y calcular gradiente
+        J, F = build_system(Ux, vort_const)
+        grad = J.T @ F  # gradiente de 1/2 ||F||^2
+
+        # 2.2) Actualizar solo nodos interiores con paso de gradiente
+        delta = lr * grad
+        interior = Ux[1:-1, 1:-1].flatten()
+        interior -= delta
+        Ux[1:-1, 1:-1] = interior.reshape(ny - 2, nx - 2)
+
+        # 2.3) Calcular norma del residuo y chequear convergencia
+        normF = np.linalg.norm(F)
+        print(f"Iteración {iteracion}: ||F|| = {normF:.3e}")
+        if normF < tol:
+            print(f"Convergencia lograda: ||F|| < {tol} en iteración {iteracion}")
             break
-            
+        if iteracion == max_iter:
+            print(f"Máximo de iteraciones ({max_iter}) alcanzado. ||F|| = {normF:.3e}")
+
     return Ux
 
-def visualizar_matriz(matriz, title):
+
+def visualizar_matriz(matriz, titulo):
     """
-    Visualiza una matriz 2D como heatmap con orientación física correcta.
-    Ejes:
-    - X: Horizontal (izquierda -> derecha)
-    - Y: Vertical (abajo -> arriba)
+    Visualiza la matriz de velocidades como un heatmap con orientación física.
+
+    Parámetros:
+    - matriz: array 2D con valores de Ux
+    - titulo: texto para el título del gráfico
     """
     plt.figure(figsize=(10, 6))
-    
-    # Crear heatmap y ajustar ejes
     ax = sns.heatmap(
         matriz,
-        annot=False,
-        fmt=".1f",
         cmap="viridis",
         linewidths=0.5,
         linecolor="black",
-        cbar_kws={'label': 'Velocidad (Ux)'}
+        cbar_kws={'label': 'Ux'}
     )
-    
-    # Configurar ejes para coincidir con orientación física
-    ax.set_title(title, fontsize=14, pad=20)
-    ax.set_xlabel('Dirección X (izquierda -> derecha)', fontsize=12)
-    ax.set_ylabel('Dirección Y (abajo -> arriba)', fontsize=12)
-    
-    # Ajustar ticks para mostrar índices físicos
+    ax.set_title(titulo)
+    ax.set_xlabel("Dirección X (izq→der)")
+    ax.set_ylabel("Dirección Y (inf→sup)")
     ax.set_xticks(np.arange(matriz.shape[1]) + 0.5)
     ax.set_xticklabels(np.arange(matriz.shape[1]))
     ax.set_yticks(np.arange(matriz.shape[0]) + 0.5)
-    ax.set_yticklabels(np.arange(matriz.shape[0]-1, -1, -1))  # Invertir orden Y
-    
-    plt.gca().invert_yaxis()  
+    ax.set_yticklabels(np.arange(matriz.shape[0] - 1, -1, -1))
+    plt.gca().invert_yaxis()
     plt.tight_layout()
     plt.show()
 
 
-# =============================================================================
-# Ejecución y visualización
-# =============================================================================
 if __name__ == "__main__":
-    tamanno_n, tamanno_m = 30, 15 
-    
-    solucion = newton_raphson(nx=tamanno_n, ny=tamanno_m  )
+    # Parámetros de simulación
+    nx, ny = 30, 15       # resolución de la rejilla
+    vort_const = 0.1      # constante de vorticidad (igual que en Newton-Raphson)
+    lr = 1e-2             # learning rate
+    tol = 1e-6            # tolerancia para ||F||
+    max_iter = 5000         # iteraciones máximas
 
-    print("\nSolución final (orientación física):")
-    print("Columnas = dirección x (izq -> der)")
-    print("Filas = dirección y (inf -> sup)\n")
-    print(solucion)  # Transponer para visualización correcta
-    
-    # Visualización mejorada
-    visualizar_matriz(
-        matriz=np.round(solucion, 7),
-        title=f"Distribución de Velocidades - Rejilla {tamanno_n}x{tamanno_m}\n(Velocidad Inicial: Ux={1})"
-    )
+    # Ejecutar gradiente descendente con vorticidad parametrizada
+    solucion = gradient_descent(nx=nx, ny=ny, vort_const=vort_const,
+                                lr=lr, tol=tol, max_iter=max_iter)
+
+    # Mostrar resultado final
+    print("\nSolución final (Orientación física):")
+    print(solucion)
+    visualizar_matriz(solucion,
+                     f"Gradiente Descendente {nx}×{ny} | vorticidad={vort_const} | lr={lr} | tol={tol}")
