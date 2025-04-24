@@ -185,7 +185,9 @@ if __name__ == "__main__":
     Ux = setup_grid(tamanno_n, tamanno_m, initial_velocity)
     
     # Resolver y obtener los errores
-    solucion, errors = gradiente_conjugado_solver(Ux, max_iter=500, tol=1e-3)
+    solucion, errors = gradiente_conjugado_solver(Ux, max_iter=2500, tol=1e-3)
+
+    print(errors)
     
     # Visualizar la distribución de velocidades
     visualizar_matriz(

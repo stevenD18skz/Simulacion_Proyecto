@@ -106,7 +106,7 @@ def gradient_descent(nx=5, ny=5, vort_const=0.1, lr=1e-2, tol=1e-6, max_iter=50)
 
         normF = np.linalg.norm(F)
         history.append(normF)
-        print(f"Iteración {iteracion}: ||F|| = {normF:.3e}")
+        #print(f"Iteración {iteracion}: ||F|| = {normF:.3e}")
 
         if normF < tol:
             print(f"Convergencia lograda: ||F|| < {tol} en iteración {iteracion}")
@@ -152,11 +152,13 @@ if __name__ == "__main__":
     vort_const = 0.1
     lr = 1e-2
     tol = 1e-6
-    max_iter = 5000
+    max_iter = 1800
 
     # Ejecutar gradiente descendente y obtener convergencia
     solucion, history = gradient_descent(nx=nx, ny=ny, vort_const=vort_const,
                                         lr=lr, tol=tol, max_iter=max_iter)
+    
+    print(history)
 
     # Mostrar resultado final
     print("\nSolución final (Orientación física):")
