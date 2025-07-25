@@ -2,7 +2,13 @@
 
 ## Descripción
 
-Este proyecto es una simulación diseñada para modelar y analizar sistemas complejos. Utiliza herramientas y técnicas avanzadas para proporcionar resultados precisos y útiles.
+Este proyecto es una simulación diseñada para modelar y analizar sistemas complejos. Utiliza herramientas y técnicas avanzadas para proporcionar resultados precisos y útiles. En este repositorio se encuentra la parte de codigo de la entrega final de proyecto de simulacion, el codigo final es el que se encuentra en la main
+
+## Integrantes del Proyecto
+
+- **Camilo Andrés Muñoz** - Código: 2042857
+- **Brayan Steven Narváez Valdés** - Código: 2226675
+- **Daniel Arias Castrillón** - Código: 2222205
 
 ## Características
 
@@ -19,24 +25,24 @@ Este proyecto es una simulación diseñada para modelar y analizar sistemas comp
 ## Instalación
 
 1. Clona este repositorio:
-    ```bash
-    git clone https://github.com/usuario/Simulacion_Proyecto.git
-    ```
+   ```bash
+   git clone https://github.com/usuario/Simulacion_Proyecto.git
+   ```
 2. Navega al directorio del proyecto:
-    ```bash
-    cd Simulacion_Proyecto
-    ```
+   ```bash
+   cd Simulacion_Proyecto
+   ```
 3. Instala las dependencias:
-    ```bash
-    pip install -r requirements.txt
-    ```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ## Uso
 
 1. Ejecuta el script principal:
-    ```bash
-    python main.py
-    ```
+   ```bash
+   python main.py
+   ```
 2. Sigue las instrucciones en pantalla para configurar la simulación.
 
 ## Contribuciones
